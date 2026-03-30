@@ -1,0 +1,23 @@
+[project]
+name = "ai-employee-vault"
+version = "0.1.0"
+description = "Personal AI Employee system for Hackathon 0"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "google-auth-httplib2",
+    "watchdog",
+    "python-dotenv",
+    "playwright",
+    "pyyaml",
+    "schedule"
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ai_employee_vault", "ai_employee_vault.*", "Watchers", "Skills"]
