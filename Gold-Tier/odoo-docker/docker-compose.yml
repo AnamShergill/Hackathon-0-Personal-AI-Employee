@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  odoo:
+    image: odoo:19.0
+    container_name: ai_employee_odoo
+    depends_on:
+      - db
+    ports:
+      - "8069:8069"
+    volumes:
+      - odoo-data:/var/lib/odoo
+      - ./addons:/mnt/extra-addons
+      - ./config:/etc/odoo
+    environment:
+      - HOST=db
+      - USER=odoo
+      - PASSWORD=${ODOO_DB_PASSWORD:-myodoopass}
+    restart: unless-stopped
+    networks:
+      - odoo-network
+
+  db:
+    image: postgres:16
+    container_name: ai_employee_postgres
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_PASSWORD=${ODOO_DB_PASSWORD:-myodoopass}
+      - POSTGRES_USER=odoo
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - odoo-network
+
+volumes:
+  odoo-data:
+    name: ai_employee_odoo_data
+  db-data:
+    name: ai_employee_postgres_data
+
+networks:
+  odoo-network:
+    name: ai_employee_network
+    driver: bridge

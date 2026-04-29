@@ -64,3 +64,9 @@ linkedin_session/
 
 # Approved watcher tracking
 Logs/approved_processed.txt
+
+# Odoo Docker
+Gold-Tier/odoo-docker/.env
+Gold-Tier/odoo-docker/config/
+odoo-docker/.env
+odoo-docker/config/

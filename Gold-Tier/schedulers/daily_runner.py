@@ -116,54 +116,16 @@ if code_blocks:
 
 
 def generate_weekly_briefing():
-    """Generate a weekly briefing summary"""
-    logger.info("📊 Generating weekly briefing...")
+    """Generate a comprehensive weekly CEO briefing"""
+    logger.info("📊 Generating weekly CEO briefing...")
     
-    try:
-        # Count files in various folders
-        needs_action = len(list(Path("Needs_Action").glob("*.md")))
-        plans = len(list(Path("Plans").glob("*.md")))
-        done = len(list(Path("Done").glob("*.md")))
-        pending_approval = len(list(Path("Pending_Approval").glob("*.md")))
-        approved = len(list(Path("Approved").glob("*.md")))
-        
-        # Create briefing
-        briefing = f"""# Weekly Briefing - {datetime.now().strftime('%Y-%m-%d')}
-
-## System Status
-- **Needs Action**: {needs_action} items
-- **Plans Created**: {plans} items
-- **Completed**: {done} items
-- **Pending Approval**: {pending_approval} items
-- **Approved**: {approved} items
-
-## Activity Summary
-- Total items processed this week: {done}
-- Items awaiting human review: {pending_approval}
-- Active plans in progress: {plans}
-
-## Recommendations
-{'- Review pending approval items' if pending_approval > 0 else '- No pending approvals'}
-{'- Process items in Needs_Action/' if needs_action > 0 else '- Inbox clear'}
-{'- Execute approved items' if approved > 0 else '- No approved items waiting'}
-
----
-*Generated automatically by Daily Runner at {datetime.now().isoformat()}*
-"""
-        
-        # Save briefing
-        briefing_path = Path("Briefings") / f"briefing_{datetime.now().strftime('%Y%m%d')}.md"
-        briefing_path.parent.mkdir(exist_ok=True)
-        
-        with open(briefing_path, 'w', encoding='utf-8') as f:
-            f.write(briefing)
-        
-        logger.info(f"✅ Weekly briefing saved: {briefing_path}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to generate briefing: {e}")
-        return False
+    command = [
+        sys.executable,
+        'actions/weekly_briefing_generator.py',
+        '--run-now'
+    ]
+    
+    return run_command(command, "Weekly CEO Briefing Generation", timeout=120)
 
 
 def cleanup_old_logs():
@@ -239,15 +201,24 @@ def evening_routine():
     logger.info("🌙 EVENING ROUTINE COMPLETE")
 
 
+def sunday_evening_routine():
+    """Sunday evening routine - run at 8 PM for weekly briefing"""
+    logger.info("📊 SUNDAY EVENING ROUTINE STARTING")
+    logger.info("=" * 80)
+    
+    # Generate comprehensive weekly CEO briefing
+    generate_weekly_briefing()
+    
+    logger.info("=" * 80)
+    logger.info("📊 SUNDAY EVENING ROUTINE COMPLETE")
+
+
 def weekly_routine():
     """Weekly routine - run on Monday at 8 AM"""
     logger.info("📅 WEEKLY ROUTINE STARTING")
     logger.info("=" * 80)
     
-    # 1. Generate comprehensive weekly briefing
-    generate_weekly_briefing()
-    
-    # 2. Clean up old logs
+    # Clean up old logs
     cleanup_old_logs()
     
     logger.info("=" * 80)
@@ -269,6 +240,10 @@ def setup_schedule():
     # Evening routine - 6 PM
     schedule.every().day.at("18:00").do(evening_routine)
     logger.info("  ✅ Evening routine: 6:00 PM daily")
+    
+    # Sunday evening - 8 PM (Weekly CEO Briefing)
+    schedule.every().sunday.at("20:00").do(sunday_evening_routine)
+    logger.info("  ✅ Sunday evening routine: 8:00 PM (Weekly CEO Briefing)")
     
     # Weekly routine - Monday 8 AM
     schedule.every().monday.at("08:00").do(weekly_routine)

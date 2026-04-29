@@ -29,10 +29,21 @@ completion_criteria: ["all_files_routed", "no_unprocessed_files"]
 ```
 
 ## Routing Logic
-- **Source: Gmail** → Call 01_EMAIL_PROCESSOR
+- **Source: Gmail** → Call 01_EMAIL_PROCESSOR → Check for accounting content → Call 12_EMAIL_TO_ODOO_EXTRACTOR if needed
 - **Source: WhatsApp** → Call 09_WHATSAPP_PROCESSOR
 - **Source: Unknown/Missing** → Log warning, move to Done/ with note
 - **Malformed file** → Move to Logs/ for manual review
+
+## Social Media Posting
+- **LinkedIn posts** → 08_LINKEDIN_POST_GENERATOR → Pending_Approval/ → Approved/ → linkedin_poster.py
+- **Facebook posts** → 13_FACEBOOK_POSTER → Pending_Approval/ → Approved/ → facebook_poster.py
+
+## Accounting Detection
+After routing to source-specific processors, check if content is accounting-related:
+- **Keywords:** invoice, billing, payment, quote, purchase order, PO, client onboarding
+- **If detected:** Call 12_EMAIL_TO_ODOO_EXTRACTOR
+- **Action:** Create structured Odoo action file in Pending_Approval/
+- **HITL:** All financial records require human approval
 
 ## Process
 1. Scan Needs_Action/ for ALL .md files

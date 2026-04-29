@@ -9,6 +9,7 @@ Monitors Approved/ folder for human-approved content and triggers appropriate ac
 import os
 import time
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
@@ -101,13 +102,19 @@ class ApprovedWatcher(BaseWatcher):
         Determine the type of approved file based on filename and content.
         
         Returns:
-            File type: 'linkedin_post', 'email_send', 'email_reply', 'whatsapp_reply', or None
+            File type: 'linkedin_post', 'facebook_post', 'email_send', 'email_reply', 'whatsapp_reply', 'odoo_action', 'odoo_record_payment', or None
         """
         filename = file_path.name.lower()
         
         # Check filename patterns first
         if 'linkedin' in filename:
             return 'linkedin_post'
+        elif 'facebook' in filename:
+            return 'facebook_post'
+        elif 'odoo_payment' in filename or 'payment' in filename:
+            return 'odoo_record_payment'
+        elif 'odoo' in filename:
+            return 'odoo_action'
         elif filename.startswith('email_send_') or filename.startswith('email_'):
             # Check if it's a send action (not just a reply draft)
             return 'email_send'
@@ -120,6 +127,10 @@ class ApprovedWatcher(BaseWatcher):
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read().lower()
+            
+            # Check for payment recording
+            if 'type: odoo_record_payment' in content or 'type: "odoo_record_payment"' in content:
+                return 'odoo_record_payment'
             
             # Check for email send indicators
             # Look for "action: send_email" or presence of "to:" and "subject:" near top
@@ -134,6 +145,10 @@ class ApprovedWatcher(BaseWatcher):
             # Check frontmatter for type
             if 'type: "linkedin_post"' in content or "type: 'linkedin_post'" in content:
                 return 'linkedin_post'
+            elif 'type: facebook_post' in content or 'type: "facebook_post"' in content or "type: 'facebook_post'" in content:
+                return 'facebook_post'
+            elif 'type: odoo_action' in content or 'type: "odoo_action"' in content or "type: 'odoo_action'" in content:
+                return 'odoo_action'
             elif 'type: "email_send"' in content or "type: 'email_send'" in content:
                 return 'email_send'
             elif 'type: "email_reply"' in content or 'type: "email_reply_draft"' in content:
@@ -164,6 +179,12 @@ class ApprovedWatcher(BaseWatcher):
         try:
             if file_type == 'linkedin_post':
                 success = self._post_to_linkedin(file_path)
+            elif file_type == 'facebook_post':
+                success = self._post_to_facebook(file_path)
+            elif file_type == 'odoo_record_payment':
+                success = self._record_payment_in_odoo(file_path)
+            elif file_type == 'odoo_action':
+                success = self._execute_odoo_action(file_path)
             elif file_type == 'email_send':
                 success = self._send_email(file_path)
             elif file_type == 'email_reply':
@@ -213,6 +234,35 @@ class ApprovedWatcher(BaseWatcher):
             return False
         except Exception as e:
             logger.error(f"Error calling linkedin_poster: {e}")
+            return False
+
+    def _post_to_facebook(self, file_path: str) -> bool:
+        """
+        Post approved content to Facebook using actions/facebook_poster.py
+        """
+        logger.info(f"[FACEBOOK] Posting to Facebook: {file_path}")
+        
+        try:
+            # Call facebook_poster.py with the file path
+            result = subprocess.run(
+                [sys.executable, 'actions/facebook_poster.py', '--file', file_path],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            
+            if result.returncode == 0:
+                logger.info("✅ Facebook post successful")
+                return True
+            else:
+                logger.error(f"Facebook post failed: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error("Facebook posting timeout")
+            return False
+        except Exception as e:
+            logger.error(f"Error calling facebook_poster: {e}")
             return False
 
     def _send_email(self, file_path: str) -> bool:
@@ -269,6 +319,298 @@ class ApprovedWatcher(BaseWatcher):
         logger.info(f"Email reply approved: {file_path}")
         # Redirect to the new email sender
         return self._send_email(file_path)
+
+    def _execute_odoo_action(self, file_path: str) -> bool:
+        """
+        Execute approved Odoo action using actions/odoo_rpc.py
+        
+        Args:
+            file_path: Path to approved Odoo action file
+            
+        Returns:
+            True if action executed successfully, False otherwise
+        """
+        logger.info(f"[ODOO] Executing Odoo action: {file_path}")
+        
+        try:
+            # Parse file to extract action type and parameters
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Extract action from content
+            action = None
+            if 'action: create_partner' in content.lower():
+                action = 'create_partner'
+            elif 'action: create_invoice' in content.lower():
+                action = 'create_invoice_from_data'
+            elif 'action: query_invoices' in content.lower() or 'action: unpaid_invoices' in content.lower():
+                action = 'unpaid_invoices'
+            elif 'action: list_partners' in content.lower():
+                action = 'list_partners'
+            
+            if not action:
+                logger.error(f"[ODOO] Could not determine action type from file")
+                return False
+            
+            # For create_invoice_from_data, parse structured data
+            if action == 'create_invoice_from_data':
+                import re
+                import json
+                
+                # Extract partner info
+                partner_name = None
+                partner_email = None
+                partner_phone = None
+                line_items = []
+                
+                # Simple regex extraction (in production, use proper parser)
+                name_match = re.search(r'Name:\s*(.+)', content)
+                if name_match:
+                    partner_name = name_match.group(1).strip()
+                
+                email_match = re.search(r'Email:\s*([^\s]+@[^\s]+)', content)
+                if email_match:
+                    partner_email = email_match.group(1).strip()
+                
+                phone_match = re.search(r'Phone:\s*(\+?[\d\-\(\)\s]+)', content)
+                if phone_match:
+                    partner_phone = phone_match.group(1).strip()
+                
+                # Extract line items
+                line_pattern = r'(\d+)\.\s*(.+?):\s*(\d+(?:\.\d+)?)\s*(?:hours?|x)?\s*\$?(\d+(?:\.\d+)?)\s*=\s*\$?(\d+(?:\.\d+)?)'
+                for match in re.finditer(line_pattern, content):
+                    description = match.group(2).strip()
+                    quantity = float(match.group(3))
+                    price_unit = float(match.group(4))
+                    line_items.append({
+                        'description': description,
+                        'quantity': quantity,
+                        'price_unit': price_unit
+                    })
+                
+                # If no structured line items, try to extract total amount
+                if not line_items:
+                    amount_match = re.search(r'(?:Total Amount|Amount):\s*\$?(\d+(?:,\d{3})*(?:\.\d{2})?)', content)
+                    if amount_match:
+                        amount_str = amount_match.group(1).replace(',', '')
+                        amount = float(amount_str)
+                        line_items.append({
+                            'description': 'Service',
+                            'quantity': 1,
+                            'price_unit': amount
+                        })
+                
+                if not partner_name or not line_items:
+                    logger.error(f"[ODOO] Missing required data: partner_name={partner_name}, line_items={len(line_items)}")
+                    self._update_file_with_error(file_path, "Missing required data for invoice creation")
+                    return False
+                
+                # Prepare data structure
+                data = {
+                    'partner_name': partner_name,
+                    'partner_email': partner_email,
+                    'partner_phone': partner_phone,
+                    'line_items': line_items,
+                    'is_company': True
+                }
+                
+                # Call RPC with JSON data
+                data_json = json.dumps(data)
+                result = subprocess.run(
+                    [sys.executable, 'actions/odoo_rpc.py', '--action', 'create_invoice_from_file', '--data', data_json, '--file', file_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=True
+                )
+                
+                logger.info(f"[ODOO] ✅ Invoice created successfully")
+                logger.info(f"[ODOO] Output: {result.stdout}")
+                
+                # Update file with result
+                self._update_file_with_success(file_path, result.stdout)
+                
+                # Move to Done folder
+                self._move_to_done(file_path)
+                return True
+            
+            else:
+                # For simple actions (list, query), just execute
+                result = subprocess.run(
+                    [sys.executable, 'actions/odoo_rpc.py', '--action', action],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=True
+                )
+                
+                logger.info(f"[ODOO] ✅ Action executed successfully")
+                logger.info(f"[ODOO] Output: {result.stdout}")
+                
+                # Update file with result
+                self._update_file_with_success(file_path, result.stdout)
+                
+                # Move to Done folder
+                self._move_to_done(file_path)
+                return True
+            
+        except subprocess.CalledProcessError as e:
+            logger.error(f"[ODOO] ❌ Action failed with exit code {e.returncode}")
+            logger.error(f"[ODOO] Error output: {e.stderr}")
+            
+            # Update file with error
+            self._update_file_with_error(file_path, e.stderr)
+            
+            # Move to Needs_Action for review
+            self._move_to_needs_action(file_path)
+            return False
+            
+        except subprocess.TimeoutExpired:
+            logger.error(f"[ODOO] ❌ Action timeout (>60s)")
+            self._update_file_with_error(file_path, "Timeout: Operation took longer than 60 seconds")
+            return False
+            
+        except Exception as e:
+            logger.error(f"[ODOO] ❌ Error executing action: {e}")
+            self._update_file_with_error(file_path, str(e))
+            return False
+    
+    def _update_file_with_success(self, file_path: str, output: str):
+        """Update file with successful execution result"""
+        timestamp = datetime.now().isoformat()
+        with open(file_path, 'a', encoding='utf-8') as f:
+            f.write(f"\n\n---\n\n**Execution Result**\n\n")
+            f.write(f"status: completed\n")
+            f.write(f"executed_at: {timestamp}\n\n")
+            f.write(f"```\n{output}\n```\n")
+    
+    def _update_file_with_error(self, file_path: str, error: str):
+        """Update file with error information"""
+        timestamp = datetime.now().isoformat()
+        with open(file_path, 'a', encoding='utf-8') as f:
+            f.write(f"\n\n---\n\n**Execution Failed**\n\n")
+            f.write(f"status: failed\n")
+            f.write(f"attempted_at: {timestamp}\n")
+            f.write(f"error: {error}\n")
+    
+    def _move_to_done(self, file_path: str):
+        """Move file to Done folder"""
+        done_dir = Path("Approved") / "Done"
+        done_dir.mkdir(exist_ok=True)
+        done_path = done_dir / Path(file_path).name
+        Path(file_path).rename(done_path)
+        logger.info(f"[ODOO] Moved to Done: {done_path}")
+    
+    def _move_to_needs_action(self, file_path: str):
+        """Move file to Needs_Action for review"""
+        needs_action_dir = Path("Needs_Action")
+        needs_action_dir.mkdir(exist_ok=True)
+        needs_action_path = needs_action_dir / Path(file_path).name
+        Path(file_path).rename(needs_action_path)
+        logger.info(f"[ODOO] Moved to Needs_Action: {needs_action_path}")
+    
+    def _record_payment_in_odoo(self, file_path: str) -> bool:
+        """
+        Record payment in Odoo from approved payment action file.
+        
+        Args:
+            file_path: Path to approved payment action file
+            
+        Returns:
+            True if payment recorded successfully
+        """
+        logger.info(f"[PAYMENT] Recording payment from: {file_path}")
+        
+        try:
+            # Parse file to extract payment details
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Extract invoice_id
+            invoice_id = None
+            invoice_id_match = re.search(r'\*\*Invoice ID:\*\*\s*(\d+)', content)
+            if invoice_id_match:
+                invoice_id = int(invoice_id_match.group(1))
+            else:
+                # Check for manually entered invoice_id
+                manual_match = re.search(r'invoice_id:\s*(\d+)', content)
+                if manual_match:
+                    invoice_id = int(manual_match.group(1))
+            
+            if not invoice_id:
+                logger.error("[PAYMENT] No invoice_id found in action file")
+                self._update_file_with_error(file_path, "Missing invoice_id - cannot proceed")
+                return False
+            
+            # Extract payment amount
+            amount_match = re.search(r'\*\*Amount:\*\*\s*\$([0-9,]+\.?\d*)', content)
+            if not amount_match:
+                logger.error("[PAYMENT] No payment amount found")
+                self._update_file_with_error(file_path, "Missing payment amount")
+                return False
+            
+            amount = float(amount_match.group(1).replace(',', ''))
+            
+            # Extract payment date
+            date_match = re.search(r'\*\*Payment Date:\*\*\s*(\d{4}-\d{2}-\d{2})', content)
+            payment_date = date_match.group(1) if date_match else datetime.now().strftime('%Y-%m-%d')
+            
+            # Extract reference
+            ref_match = re.search(r'\*\*(?:Reference|Transaction ID):\*\*\s*(.+)', content)
+            reference = ref_match.group(1).strip() if ref_match else None
+            
+            # Extract payment method
+            method_match = re.search(r'\*\*Payment Method:\*\*\s*(\w+)', content)
+            payment_method = method_match.group(1) if method_match else 'manual'
+            
+            logger.info(f"[PAYMENT] Recording ${amount} for invoice ID {invoice_id}")
+            
+            # Call Odoo RPC to record payment
+            result = subprocess.run(
+                [
+                    sys.executable, 'actions/odoo_rpc.py',
+                    '--action', 'record_payment',
+                    '--invoice-id', str(invoice_id),
+                    '--amount', str(amount),
+                    '--payment-date', payment_date,
+                    '--reference', reference or f'Payment for invoice {invoice_id}'
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=True
+            )
+            
+            logger.info(f"[PAYMENT] ✅ Payment recorded successfully")
+            logger.info(f"[PAYMENT] Output: {result.stdout}")
+            
+            # Update file with success
+            self._update_file_with_success(file_path, result.stdout)
+            
+            # Move to Done
+            self._move_to_done(file_path)
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            logger.error(f"[PAYMENT] ❌ Payment recording failed with exit code {e.returncode}")
+            logger.error(f"[PAYMENT] Error output: {e.stderr}")
+            
+            # Update file with error
+            self._update_file_with_error(file_path, e.stderr)
+            
+            # Move to Needs_Action for review
+            self._move_to_needs_action(file_path)
+            return False
+            
+        except subprocess.TimeoutExpired:
+            logger.error(f"[PAYMENT] ❌ Payment recording timeout (>60s)")
+            self._update_file_with_error(file_path, "Timeout: Operation took longer than 60 seconds")
+            return False
+            
+        except Exception as e:
+            logger.error(f"[PAYMENT] ❌ Error recording payment: {e}")
+            self._update_file_with_error(file_path, str(e))
+            return False
 
     def _send_whatsapp_reply(self, file_path: str) -> bool:
         """

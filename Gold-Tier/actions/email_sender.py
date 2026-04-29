@@ -6,6 +6,13 @@ Standalone script that sends emails from approved .md files.
 Reads email metadata from markdown frontmatter, sends via SMTP,
 and updates the file with send status.
 
+Features:
+- Retry logic with exponential backoff (3 attempts)
+- HTML email support (auto-detect)
+- Professional signature injection
+- Graceful error handling
+- Comprehensive logging
+
 Usage:
     python actions/email_sender.py --file Approved/email_send_20260321_abc123.md
 
@@ -27,24 +34,30 @@ import logging
 import os
 import smtplib
 import sys
+import time
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from dotenv import load_dotenv
 
-# Configure logging
+# Configure logging with UTF-8 encoding for Windows
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('Logs/email_sender.log'),
-        logging.StreamHandler()
+        logging.FileHandler('Logs/email_sender.log', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY = 2  # seconds
+BACKOFF_MULTIPLIER = 2
 
 
 class EmailSenderError(Exception):
@@ -55,6 +68,7 @@ class EmailSenderError(Exception):
 class EmailSender:
     """
     Email sender that reads markdown files and sends emails via SMTP.
+    Includes retry logic, HTML support, and signature injection.
     """
     
     def __init__(self):
@@ -77,8 +91,46 @@ class EmailSender:
         if not self.from_email:
             raise EmailSenderError("FROM_EMAIL not configured in .env file")
         
+        # Load professional signature
+        self.signature = self._load_signature()
+        
         logger.info(f"Email sender initialized with server: {self.smtp_server}:{self.smtp_port}")
         logger.info(f"Sending from: {self.from_email}")
+    
+    def _load_signature(self) -> str:
+        """
+        Load professional email signature from Company_Handbook.md
+        
+        Returns:
+            Email signature string
+        """
+        try:
+            handbook_path = Path("Company_Handbook.md")
+            if handbook_path.exists():
+                with open(handbook_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # Extract company name and basic info
+                    # Simple extraction - can be enhanced
+                    return "\n\n---\nBest regards,\nAI Employee System\nGold Tier"
+            else:
+                return "\n\n---\nBest regards"
+        except Exception as e:
+            logger.warning(f"Could not load signature: {e}")
+            return "\n\n---\nBest regards"
+    
+    def _is_html_content(self, body: str) -> bool:
+        """
+        Detect if email body contains HTML.
+        
+        Args:
+            body: Email body text
+            
+        Returns:
+            True if HTML detected
+        """
+        html_indicators = ['<html', '<body', '<div', '<p>', '<br>', '<table', '<h1', '<h2']
+        body_lower = body.lower()
+        return any(indicator in body_lower for indicator in html_indicators)
     
     def parse_email_file(self, filepath: Path) -> Dict[str, str]:
         """
@@ -173,23 +225,34 @@ class EmailSender:
         
         return email_data
     
-    def send_email(self, email_data: Dict[str, str]) -> Optional[str]:
+    def send_email(self, email_data: Dict[str, str]) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Send email via SMTP.
+        Send email via SMTP with retry logic and exponential backoff.
         
         Args:
             email_data: Dictionary with to, subject, body, cc, from
             
         Returns:
-            Message ID if available, None otherwise
+            Tuple of (success, message_id, error_message)
             
         Raises:
-            EmailSenderError: If sending fails
+            EmailSenderError: If all retry attempts fail
         """
         logger.info("Preparing to send email...")
         
+        # Inject signature if not already present
+        body = email_data['body']
+        if self.signature and self.signature not in body:
+            body += self.signature
+        
+        # Detect if HTML
+        is_html = self._is_html_content(body)
+        content_type = 'html' if is_html else 'plain'
+        
+        logger.info(f"Email format: {content_type.upper()}")
+        
         # Create message
-        msg = MIMEMultipart()
+        msg = MIMEMultipart('alternative')
         msg['From'] = email_data['from']
         msg['To'] = email_data['to']
         msg['Subject'] = email_data['subject']
@@ -198,8 +261,8 @@ class EmailSender:
         if email_data['cc']:
             msg['Cc'] = email_data['cc']
         
-        # Attach body as plain text
-        msg.attach(MIMEText(email_data['body'], 'plain', 'utf-8'))
+        # Attach body
+        msg.attach(MIMEText(body, content_type, 'utf-8'))
         
         # Build recipient list
         recipients = [email_data['to']]
@@ -210,32 +273,58 @@ class EmailSender:
         
         logger.info(f"Sending to {len(recipients)} recipient(s)")
         
-        # Send email
-        try:
-            with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30) as server:
-                # Enable TLS
-                server.starttls()
+        # Retry logic with exponential backoff
+        last_error = None
+        retry_delay = INITIAL_RETRY_DELAY
+        
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                logger.info(f"Attempt {attempt}/{MAX_RETRIES}...")
                 
-                # Login (don't log password)
-                logger.info(f"Logging in as: {self.smtp_user}")
-                server.login(self.smtp_user, self.smtp_pass)
+                with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30) as server:
+                    # Enable TLS
+                    server.starttls()
+                    
+                    # Login (don't log password)
+                    logger.info(f"Logging in as: {self.smtp_user}")
+                    server.login(self.smtp_user, self.smtp_pass)
+                    
+                    # Send email
+                    logger.info("Sending email...")
+                    server.send_message(msg)
+                    
+                    logger.info(f"✅ Email sent successfully on attempt {attempt}!")
+                    
+                    # Try to get message ID
+                    message_id = msg.get('Message-ID')
+                    return (True, message_id, None)
+                    
+            except smtplib.SMTPAuthenticationError as e:
+                error_msg = f"SMTP authentication failed: {e}"
+                logger.error(error_msg)
+                # Don't retry auth errors
+                return (False, None, error_msg)
                 
-                # Send email
-                logger.info("Sending email...")
-                server.send_message(msg)
+            except (smtplib.SMTPException, ConnectionError, TimeoutError) as e:
+                last_error = str(e)
+                logger.warning(f"Attempt {attempt} failed: {e}")
                 
-                logger.info("✅ Email sent successfully!")
-                
-                # Try to get message ID
-                message_id = msg.get('Message-ID')
-                return message_id
-                
-        except smtplib.SMTPAuthenticationError as e:
-            raise EmailSenderError(f"SMTP authentication failed: {e}")
-        except smtplib.SMTPException as e:
-            raise EmailSenderError(f"SMTP error: {e}")
-        except Exception as e:
-            raise EmailSenderError(f"Failed to send email: {e}")
+                if attempt < MAX_RETRIES:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= BACKOFF_MULTIPLIER
+                else:
+                    error_msg = f"All {MAX_RETRIES} attempts failed. Last error: {last_error}"
+                    logger.error(error_msg)
+                    return (False, None, error_msg)
+                    
+            except Exception as e:
+                error_msg = f"Unexpected error: {e}"
+                logger.error(error_msg)
+                return (False, None, error_msg)
+        
+        # Should not reach here, but just in case
+        return (False, None, f"Failed after {MAX_RETRIES} attempts")
     
     def update_file_success(self, filepath: Path, message_id: Optional[str] = None):
         """
@@ -346,16 +435,25 @@ class EmailSender:
             # Parse email file
             email_data = self.parse_email_file(filepath)
             
-            # Send email
-            message_id = self.send_email(email_data)
+            # Send email with retry logic
+            success, message_id, error_msg = self.send_email(email_data)
             
-            # Update file with success
-            self.update_file_success(filepath, message_id)
-            
-            logger.info("=" * 80)
-            logger.info("✅ EMAIL SENT SUCCESSFULLY")
-            logger.info("=" * 80)
-            return True
+            if success:
+                # Update file with success
+                self.update_file_success(filepath, message_id)
+                
+                logger.info("=" * 80)
+                logger.info("✅ EMAIL SENT SUCCESSFULLY")
+                logger.info("=" * 80)
+                return True
+            else:
+                # Update file with failure
+                self.update_file_failure(filepath, error_msg or "Unknown error")
+                
+                logger.info("=" * 80)
+                logger.info("❌ EMAIL SENDING FAILED")
+                logger.info("=" * 80)
+                return False
             
         except EmailSenderError as e:
             logger.error(f"❌ Email sending failed: {e}")
