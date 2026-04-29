@@ -1,0 +1,9 @@
+# Platinum Tier Requirements
+
+# Core dependencies
+python-dotenv>=1.0.0
+
+# For future Gold Tier integration (optional)
+# These are only needed if Gold Tier is available
+# requests>=2.31.0
+# openai>=1.0.0

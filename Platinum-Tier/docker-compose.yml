@@ -1,0 +1,123 @@
+# Platinum Tier - Docker Compose Configuration
+# For Cloud VM deployment (Oracle Cloud Free Tier)
+
+version: '3.8'
+
+services:
+  # Cloud Agent - 24/7 Draft-Only Operation
+  cloud-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: platinum-cloud-agent
+    restart: always
+    environment:
+      - AGENT_MODE=cloud
+      - VAULT_PATH=/app/Vault
+      - LOG_LEVEL=INFO
+    env_file:
+      - .env
+    volumes:
+      - ./Vault:/app/Vault
+      - ./Logs/cloud:/app/Logs/cloud
+    command: python Actions/cloud_agent.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/Vault') else 1)"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Vault Sync - Periodic Git Sync
+  vault-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: platinum-vault-sync
+    restart: always
+    environment:
+      - AGENT_MODE=cloud
+      - VAULT_PATH=/app/Vault
+    env_file:
+      - .env
+    volumes:
+      - ./Vault:/app/Vault
+      - ./Logs/cloud:/app/Logs/cloud
+      - ~/.ssh:/root/.ssh:ro  # For Git SSH keys
+    command: >
+      sh -c "
+      while true; do
+        python Actions/vault_sync_manager.py sync
+        sleep 60
+      done
+      "
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  default:
+    name: platinum-network
+
+# ============================================================================
+# USAGE
+# ============================================================================
+#
+# Start Cloud Agent:
+#   docker-compose up -d
+#
+# View logs:
+#   docker-compose logs -f cloud-agent
+#   docker-compose logs -f vault-sync
+#
+# Stop services:
+#   docker-compose down
+#
+# Restart services:
+#   docker-compose restart
+#
+# Check status:
+#   docker-compose ps
+#
+# ============================================================================
+# DEPLOYMENT ON ORACLE CLOUD FREE TIER
+# ============================================================================
+#
+# 1. SSH into Oracle Cloud VM:
+#    ssh ubuntu@<your-vm-ip>
+#
+# 2. Install Docker and Docker Compose:
+#    sudo apt update
+#    sudo apt install -y docker.io docker-compose
+#    sudo usermod -aG docker $USER
+#    newgrp docker
+#
+# 3. Clone repository:
+#    git clone https://github.com/your-username/Platinum-Tier.git
+#    cd Platinum-Tier
+#
+# 4. Configure environment:
+#    cp Config/cloud.env.example .env
+#    nano .env  # Edit with your Cloud credentials
+#
+# 5. Initialize Vault Git:
+#    cd Vault
+#    git init
+#    git remote add origin https://github.com/your-username/platinum-vault.git
+#    cd ..
+#
+# 6. Start services:
+#    docker-compose up -d
+#
+# 7. Verify:
+#    docker-compose ps
+#    docker-compose logs -f
+#
+# ============================================================================

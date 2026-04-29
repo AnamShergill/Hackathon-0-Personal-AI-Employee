@@ -1,0 +1,26 @@
+{
+  "task_id": "demo_test_20260415_164420",
+  "type": "email",
+  "action": "draft_reply",
+  "priority": "normal",
+  "created_at": "2026-04-15T16:44:20.797178",
+  "email": {
+    "from": "customer@example.com",
+    "to": "ceo@company.com",
+    "subject": "Question about your services",
+    "body": "Hi, I would like to know more about your consulting services. Can you provide pricing and availability?",
+    "received_at": "2026-04-15T16:44:20.797196"
+  },
+  "instructions": "Draft a professional reply with pricing information",
+  "_claim_metadata": {
+    "claimed_by": "cloud",
+    "claimed_at": "2026-04-15T16:44:21.824955",
+    "claim_id": "cloud_1776253461"
+  },
+  "_completion_metadata": {
+    "completed_at": "2026-04-15T16:44:21.850233",
+    "completed_by": "cloud",
+    "result": "Draft created: draft_demo_test_20260415_164420.json",
+    "processing_time": 0.0
+  }
+}

@@ -1,0 +1,117 @@
+# Platinum Tier Vault - Git Ignore
+# Protects secrets and sensitive files from being synced
+
+# ============================================================================
+# SECRETS (NEVER SYNC)
+# ============================================================================
+
+# Environment files
+*.env
+.env
+.env.*
+.env.local
+.env.cloud
+
+# Credentials
+*_secrets.json
+credentials.json
+*_credentials.json
+*.key
+*.pem
+
+# Tokens
+tokens/
+*_token
+*_tokens.json
+
+# ============================================================================
+# SESSIONS (NEVER SYNC)
+# ============================================================================
+
+# WhatsApp session
+*_session/
+*.session
+whatsapp_session/
+
+# Social media sessions
+linkedin_session/
+facebook_session/
+twitter_session/
+
+# ============================================================================
+# BANKING & PAYMENTS (NEVER SYNC)
+# ============================================================================
+
+banking_creds/
+payment_tokens/
+*_banking.json
+*_payment.json
+
+# ============================================================================
+# LOCAL-ONLY FILES (NEVER SYNC)
+# ============================================================================
+
+# Dashboard (Local writes only)
+../Dashboard.md
+Dashboard.md
+
+# Local state
+../local_state.json
+local_state.json
+
+# ============================================================================
+# SYSTEM FILES
+# ============================================================================
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Temporary files
+*.tmp
+*.temp
+*.lock
+*.log
+
+# ============================================================================
+# ALLOWED FILES (EXPLICITLY SYNC)
+# ============================================================================
+
+# Task files (markdown)
+!Needs_Action/**/*.md
+!Plans/**/*.md
+!Pending_Approval/**/*.md
+!In_Progress/**/*.md
+!Updates/**/*.md
+!Signals/**/*.signal
+!Done/**/*.md
+!Briefings/**/*.md
+
+# State files (JSON without secrets)
+!**/task_*.json
+!**/state_*.json
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# This .gitignore ensures:
+# 1. No secrets are ever synced to Git
+# 2. Only task files and state files are synced
+# 3. Sessions and credentials stay local
+# 4. Dashboard.md is Local-only (not synced)
+# ============================================================================
